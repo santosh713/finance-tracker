@@ -1,109 +1,29 @@
 let user = null;
-const transactions = [];
-const debts = [];
+let debts = [];
+let transactions = [];
 
-async function getUser() {
-  const res = await fetch("/api/auth/user", { credentials: "include" });
-  user = await res.json();
-  if (!user) {
-    window.location.href = "/public/index.html";
-    return false;
+async function getSessionUser() {
+  try {
+    const res = await fetch("/api/auth/session");
+    const data = await res.json();
+    user = data?.user;
+
+    if (!user?.email) {
+      alert("Not logged in.");
+      return;
+    }
+
+    document.getElementById("username").innerText = user.name;
+    document.getElementById("avatar").src = user.picture;
+
+    loadDebts();
+    loadTransactions();
+  } catch (err) {
+    console.error("Error fetching session user:", err);
   }
-
-  const nameEl = document.getElementById("userName");
-  const picEl = document.getElementById("userPic");
-  if (nameEl) nameEl.textContent = user.displayName || user.name?.givenName || "User";
-  if (picEl) picEl.src = user.photos?.[0]?.value || "https://www.gravatar.com/avatar?d=mp";
-
-  const logoutBtn = document.getElementById("logoutBtn");
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", () => {
-      window.location.href = "/api/auth/logout";
-    });
-  }
-
-  return true;
 }
 
-async function loadTransactions() {
-  const res = await fetch(`/api/getTransactions?email=${user.email}`);
-  const data = await res.json();
-  const table = document.getElementById("transactionTable");
-  table.innerHTML = "";
-  transactions.length = 0;
-
-  data.forEach(([date, type, category, amount, note]) => {
-    transactions.push({ date, type, category, amount, note });
-    table.innerHTML += `
-      <tr class="text-center">
-        <td>${date}</td>
-        <td>${type}</td>
-        <td>${category}</td>
-        <td>$${parseFloat(amount).toFixed(2)}</td>
-        <td>${note}</td>
-      </tr>
-    `;
-  });
-
-  updateTransactionChart();
-}
-
-async function loadDebts() {
-  const res = await fetch(`/api/getDebts?email=${user.email}`);
-  const data = await res.json();
-  const table = document.getElementById("debtTable");
-  table.innerHTML = "";
-  debts.length = 0;
-
-  data.forEach(([person, amount, due, direction, status], i) => {
-    const entry = { person, amount, due, direction, status };
-    debts.push(entry);
-    table.innerHTML += `
-      <tr class="text-center">
-        <td>${person}</td>
-        <td>$${parseFloat(amount).toFixed(2)}</td>
-        <td>${due}</td>
-        <td>${direction}</td>
-        <td>${status || "Pending"}</td>
-        <td>
-          ${
-            status !== "Paid"
-              ? `<button onclick="markPaid(${i})" class="text-green-500 hover:underline">Mark Paid</button>`
-              : `✅`
-          }
-        </td>
-      </tr>
-    `;
-  });
-
-  updateDebtChart();
-}
-
-async function markPaid(i) {
-  await fetch("/api/updateDebt", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: user.email, rowIndex: i }),
-  });
-
-  loadDebts();
-}
-
-document.getElementById("transactionForm")?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const form = new FormData(e.target);
-  const body = Object.fromEntries(form.entries());
-  body.email = user.email;
-
-  await fetch("/api/addTransaction", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  e.target.reset();
-  loadTransactions();
-});
+getSessionUser();
 
 document.getElementById("debtForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -111,75 +31,147 @@ document.getElementById("debtForm")?.addEventListener("submit", async (e) => {
   const body = Object.fromEntries(form.entries());
   body.email = user.email;
 
-  await fetch("/api/addDebt", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch("/api/addDebt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  e.target.reset();
-  loadDebts();
+    if (!res.ok) throw new Error("Failed to add debt");
+
+    e.target.reset();
+    loadDebts();
+  } catch (err) {
+    console.error(err);
+    alert("Could not add debt");
+  }
 });
 
-function updateTransactionChart() {
-  const canvas = document.getElementById("transactionChart");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
+async function markPaid(i) {
+  try {
+    await fetch("/api/updateDebt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user.email, rowIndex: i }),
+    });
 
-  const summary = {};
-  transactions.forEach(t => {
-    if (!summary[t.category]) summary[t.category] = 0;
-    summary[t.category] += parseFloat(t.amount);
-  });
+    loadDebts();
+  } catch (err) {
+    console.error("Error marking paid:", err);
+  }
+}
 
-  new Chart(ctx, {
-    type: "pie",
-    data: {
-      labels: Object.keys(summary),
-      datasets: [
-        {
-          data: Object.values(summary),
-        },
-      ],
-    },
-  });
+async function loadDebts() {
+  try {
+    const res = await fetch(`/api/getDebts?email=${user.email}`);
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error("Invalid debts response");
+
+    const table = document.getElementById("debtTable");
+    table.innerHTML = "";
+    debts.length = 0;
+
+    data.forEach(([person, amount, due, direction, status], i) => {
+      const entry = { person, amount, due, direction, status };
+      debts.push(entry);
+      table.innerHTML += `
+        <tr class="text-center">
+          <td>${person}</td>
+          <td>$${parseFloat(amount).toFixed(2)}</td>
+          <td>${due}</td>
+          <td>${direction}</td>
+          <td>${status || "Pending"}</td>
+          <td>
+            ${
+              status !== "Paid"
+                ? `<button onclick="markPaid(${i})" class="text-green-500 hover:underline">Mark Paid</button>`
+                : `✅`
+            }
+          </td>
+        </tr>
+      `;
+    });
+
+    updateDebtChart();
+  } catch (err) {
+    console.error("Error loading debts:", err);
+  }
+}
+
+async function loadTransactions() {
+  try {
+    const res = await fetch(`/api/getTransactions?email=${user.email}`);
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error("Invalid transactions response");
+
+    const table = document.getElementById("transactionTable");
+    table.innerHTML = "";
+    transactions.length = 0;
+
+    data.forEach(([category, amount, date]) => {
+      const entry = { category, amount, date };
+      transactions.push(entry);
+      table.innerHTML += `
+        <tr class="text-center">
+          <td>${category}</td>
+          <td>$${parseFloat(amount).toFixed(2)}</td>
+          <td>${date}</td>
+        </tr>
+      `;
+    });
+
+    updateTransactionChart();
+  } catch (err) {
+    console.error("Error loading transactions:", err);
+  }
 }
 
 function updateDebtChart() {
-  const canvas = document.getElementById("debtChart");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-
-  let toGive = 0;
-  let toReceive = 0;
-  debts.forEach(d => {
-    const amt = parseFloat(d.amount);
-    if (d.direction === "Give") toGive += amt;
-    else if (d.direction === "Receive") toReceive += amt;
-  });
+  const ctx = document.getElementById("debtChart").getContext("2d");
+  const owed = debts.filter(d => d.direction === "Owe").length;
+  const lent = debts.filter(d => d.direction === "Lend").length;
 
   new Chart(ctx, {
     type: "pie",
     data: {
-      labels: ["Give", "Receive"],
-      datasets: [
-        {
-          data: [toGive, toReceive],
-        },
-      ],
+      labels: ["You Owe", "You Lent"],
+      datasets: [{
+        data: [owed, lent],
+        backgroundColor: ["#f87171", "#34d399"],
+      }],
     },
+    options: {
+      responsive: true,
+    }
   });
 }
 
-// Dark mode toggle
-document.getElementById("darkToggle")?.addEventListener("click", () => {
-  document.body.classList.toggle("dark");
-});
+function updateTransactionChart() {
+  const ctx = document.getElementById("transactionChart").getContext("2d");
+  const categorySums = {};
 
-(async () => {
-  const ok = await getUser();
-  if (!ok) return;
+  transactions.forEach(t => {
+    const category = t.category || "Other";
+    categorySums[category] = (categorySums[category] || 0) + parseFloat(t.amount);
+  });
 
-  loadTransactions();
-  loadDebts();
-})();
+  const labels = Object.keys(categorySums);
+  const data = Object.values(categorySums);
+
+  new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "Expenses by Category",
+        data,
+        backgroundColor: "#60a5fa",
+      }],
+    },
+    options: {
+      responsive: true,
+      indexAxis: "y",
+    }
+  });
+}
