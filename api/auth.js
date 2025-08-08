@@ -70,6 +70,11 @@ app.get("/api/auth/logout", (req, res) => {
     res.redirect("/public/index.html");
   });
 });
+// Who am I? (used by dashboard to get the session user)
+app.get("/api/auth/user", (req, res) => {
+  res.json(req.user || null);
+});
 
 // ✅ Export handler for Vercel
 export default (req, res) => app(req, res);
+
